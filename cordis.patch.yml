@@ -1,0 +1,12 @@
+# Register the WorkBuddy AI (international) provider without changing the
+# profile's current default model. The plugin reuses the WorkBuddy AI desktop
+# app's sign-in; no separate OAuth flow is started.
+#
+# Default policy: only models the product configuration prices x0.00.
+# Switch to `modelScope: all` in Settings → Plugins to list paid models too.
+- insert:
+    - id: llm-workbuddyai
+      name: dsh-workbuddyai-connect
+      config:
+        probeConsent: false
+        modelScope: free
