@@ -12,7 +12,7 @@
  */
 
 import { createProvider } from '@earendil-works/pi-ai'
-import type { Api, Model, ModelThinkingLevel, Provider, ThinkingLevelMap } from '@earendil-works/pi-ai'
+import type { Api, Credential, CredentialInfo, Model, ModelThinkingLevel, Provider, ThinkingLevelMap } from '@earendil-works/pi-ai'
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy'
 import { resolveRetryPolicy } from '@deepseek-ai/dsh-llm'
 import type { LlmModelInfo, LlmResolvedModelInfo } from '@deepseek-ai/dsh-llm'
@@ -57,6 +57,38 @@ const MAX_REQUEST_IMAGE_BYTES = 20_971_520
  */
 /** No per-token pricing is knowable for a subscription quota; report zero. */
 const NO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } as const
+
+/**
+ * Inert pi-ai auth plane.
+ *
+ * The route authenticates only through the shim shared secret resolved per
+ * request by `resolveApiKey`, so pi-ai's own credential lifecycle and ambient
+ * discovery must never manufacture a credential for it. `PiAiAdapterOptions.auth`
+ * is required since 0.1.1-rc.2; every ambient question here answers "nothing
+ * stored, nothing set".
+ */
+const INERT_AUTH: ConstructorParameters<typeof PiAiAdapter>[0]['auth'] = {
+  credentials: {
+    async read(): Promise<Credential | undefined> {
+      return undefined
+    },
+    async list(): Promise<readonly CredentialInfo[]> {
+      return []
+    },
+    async modify(): Promise<Credential | undefined> {
+      throw new Error('dsh-workbuddyai-connect: the workbuddyai route has no pi-ai credential lifecycle')
+    },
+    async delete(): Promise<void> {},
+  },
+  authContext: {
+    async env(): Promise<string | undefined> {
+      return undefined
+    },
+    async fileExists(): Promise<boolean> {
+      return false
+    },
+  },
+}
 
 /**
  * Separator between a model's name and its billing rate.
@@ -232,6 +264,12 @@ export function createWorkBuddyAiAdapter(options: WorkBuddyAiAdapterOptions): Wo
     streamIdleTimeoutMs: WORKBUDDYAI_STREAM_IDLE_TIMEOUT_MS,
     retryPolicy: resolveRetryPolicy(undefined, 'dsh-workbuddyai-connect retryPolicy'),
     configuredMaxTokens: new Map(),
+    // Hand-built profiles must adopt every adapter-owned default explicitly:
+    // dsh-llm-pi-ai resolves them on its own resolveProfiles() path only, and
+    // reads these fields directly at request time (e.g. modelErrors.get()).
+    modelErrors: new Map(),
+    requestImagePixelBudget: 4_194_304,
+    requestImageMaxBytes: 1_048_576,
     maxRequestImageBytes: MAX_REQUEST_IMAGE_BYTES,
     piProvider: provider,
   }
@@ -240,6 +278,7 @@ export function createWorkBuddyAiAdapter(options: WorkBuddyAiAdapterOptions): Wo
 
   const adapter = new WorkBuddyAiPiAiAdapter(catalog, {
     profiles: () => profiles,
+    auth: INERT_AUTH,
     // Resolve the shim's per-process shared secret as the OpenAI apiKey so pi-ai
     // sends it as `Authorization: Bearer <shared-secret>`. The shim validates
     // this before forwarding and resolves the real WorkBuddy token itself via
