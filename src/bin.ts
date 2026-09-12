@@ -4,13 +4,14 @@
 import { realpathSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { WorkBuddyAiCredentialStore, workbuddyAiOwnAuthPath, WORKBUDDYAI_AUTH_FILE_ENV } from './auth.ts'
+import { WorkBuddyAiOAuthLogin } from './oauth.ts'
 import { WorkBuddyAiUpstreamClient } from './upstream.ts'
 import { FALLBACK_WORKBUDDYAI_MODELS } from './catalog.ts'
 import { WORKBUDDYAI_CONNECT_VERSION } from './version.ts'
 import { isHeartbeatProcessAlive, readHostHeartbeat, workbuddyAiHostHeartbeatPath } from './host-heartbeat.ts'
 import { loadProductConfig, workbuddyAiProductConfigPath } from './product-config.ts'
 
-type Action = 'doctor' | 'logout' | 'status'
+type Action = 'doctor' | 'login' | 'logout' | 'status'
 
 const JSON_SCHEMA_VERSION = 1
 
@@ -24,10 +25,11 @@ function safeMessage(error: unknown): string {
 
 function printHelp(): void {
   process.stdout.write([
-    'Usage: dsh-workbuddyai-connect <doctor|status|logout> [--json]',
+    'Usage: dsh-workbuddyai-connect <doctor|status|login|logout> [--json]',
     '',
     '  doctor   secret-free sign-in and environment diagnostics',
     '  status   sign-in state, remaining WorkBuddy AI credit, and host-bundle health',
+    '  login    open the WorkBuddy AI website and save tokens to the plugin-owned copy',
     '  logout   remove the plugin-owned credential copy (the desktop app keeps its sign-in)',
     '  --json   emit one secret-free JSON document (doctor/status only)',
     '',
@@ -76,8 +78,8 @@ async function doctor(jsonOutput: boolean): Promise<number> {
     signIn: status.state,
     fallbackModels: FALLBACK_WORKBUDDYAI_MODELS.length,
     hints: [
-      ...status.state === 'signed-in' ? [] : ['Sign in once in the WorkBuddy AI international desktop app, then run status again.'],
-      ...desktopPresent ? [] : [`No WorkBuddy AI desktop auth file at the expected path; set ${WORKBUDDYAI_AUTH_FILE_ENV} if it lives elsewhere.`],
+      ...status.state === 'signed-in' ? [] : ['Connect from the plugin card, or run: dsh plugin --profile web exec dsh-workbuddyai-connect login'],
+      ...desktopPresent ? [] : ['Desktop auth file is optional; browser OAuth writes the plugin-owned copy instead.'],
       ...hostAlive ? [] : ['Host bundle not running in this DSH profile (or the process exited). The browser card and provider are unavailable until DSH starts the plugin.'],
     ],
   }
@@ -96,7 +98,25 @@ async function doctor(jsonOutput: boolean): Promise<number> {
       '',
     ].join('\n'))
   }
-  return status.state === 'signed-in' && desktopPresent ? 0 : 1
+  return status.state === 'signed-in' ? 0 : 1
+}
+
+async function login(): Promise<number> {
+  const client = new WorkBuddyAiUpstreamClient()
+  const store = new WorkBuddyAiCredentialStore({ refresh: credential => client.refreshToken(credential) })
+  const oauth = new WorkBuddyAiOAuthLogin(client)
+  const started = await oauth.start()
+  process.stdout.write(`Open this URL to sign in:\n${started.authUrl}\n`)
+  for (;;) {
+    await new Promise(resolve => { setTimeout(resolve, 2000) })
+    const result = await oauth.poll()
+    if ('pending' in result) continue
+    const saved = await store.importCredential(result.auth)
+    const who = saved.nickname ?? (saved.uid === '' ? 'account' : saved.uid)
+    process.stdout.write(`WorkBuddy AI Connect: signed in as ${who} (${workbuddyAiOwnAuthPath()})\n`)
+    return 0
+  }
+  return 1
 }
 
 async function status(jsonOutput: boolean): Promise<number> {
@@ -158,15 +178,15 @@ export async function run(argv: readonly string[]): Promise<number> {
     return 0
   }
   const [rawAction, ...flags] = argv
-  const actions: readonly Action[] = ['doctor', 'logout', 'status']
+  const actions: readonly Action[] = ['doctor', 'login', 'logout', 'status']
   if (!actions.includes(rawAction as Action)) {
-    process.stderr.write(`dsh-workbuddyai-connect: expected doctor, logout, or status; got ${JSON.stringify(rawAction)}\n`)
+    process.stderr.write(`dsh-workbuddyai-connect: expected doctor, login, logout, or status; got ${JSON.stringify(rawAction)}\n`)
     return 1
   }
   const action = rawAction as Action
   const jsonOutput = flags.includes('--json')
   const unknown = flags.filter(flag => flag !== '--json')
-  if (unknown.length > 0 || (jsonOutput && action === 'logout')) {
+  if (unknown.length > 0 || (jsonOutput && (action === 'logout' || action === 'login'))) {
     process.stderr.write(`dsh-workbuddyai-connect: invalid options for ${action}: ${flags.join(' ')}\n`)
     return 1
   }
@@ -176,6 +196,8 @@ export async function run(argv: readonly string[]): Promise<number> {
         return await doctor(jsonOutput)
       case 'status':
         return await status(jsonOutput)
+      case 'login':
+        return await login()
       case 'logout': {
         const store = makeStore()
         await store.logout()

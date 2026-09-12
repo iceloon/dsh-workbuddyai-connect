@@ -1,14 +1,15 @@
 /**
- * WorkBuddy AI (international) models for DeepSeek Harness, reusing the
- * WorkBuddy international desktop app's sign-in.
+ * WorkBuddy AI (international) models for DeepSeek Harness.
+ *
+ * Sign-in is browser OAuth (official CLI login) saved under `$DSH_HOME`, or the
+ * WorkBuddy international desktop app's auth file as a fallback.
  *
  * Registers the `workbuddyai` provider; streaming, tool calls, compaction, and
  * permissions stay Harness-owned. The plugin exists because the overseas
  * deployment differs from the domestic one in three ways that a
  * domestically-configured route cannot absorb:
  *
- * 1. It signs in through its own auth file (`workbuddy-desktop-ai.info`) with
- *    domain `www.workbuddy.ai`.
+ * 1. It signs in against `www.workbuddy.ai` (browser OAuth, or `workbuddy-desktop-ai.info`).
  * 2. Its personal model catalog lives at `/v2/enterprises/...` — the domestic
  *    `/console/...` path answers HTTP 500 there.
  * 3. Two of its free models are absent from that catalog entirely and must be
@@ -31,6 +32,7 @@ import { WorkBuddyAiUpstreamClient } from './upstream.ts'
 import { loadProductConfig } from './product-config.ts'
 import { registerWorkBuddyAiStatusRoute } from './web-status.ts'
 import { createControlKey, registerWorkBuddyAiControlRoute } from './control-route.ts'
+import { WorkBuddyAiOAuthLogin } from './oauth.ts'
 import type { WorkBuddyAiModelInfo } from './catalog.ts'
 import type { WorkBuddyAiWebProbeSection } from './status-paths.ts'
 import { clearHostHeartbeat, writeHostHeartbeat } from './host-heartbeat.ts'
@@ -73,10 +75,12 @@ export {
   type ProbeSender,
 } from './probe.ts'
 export { WorkBuddyAiProbeService, type WorkBuddyAiProbeStatus } from './probe-service.ts'
+export { WorkBuddyAiOAuthLogin, LOGIN_TIMEOUT_MS } from './oauth.ts'
 export {
   defaultDesktopAuthCandidates,
   defaultDesktopAuthPath,
   parseWorkBuddyAiAuth,
+  credentialFromPluginToken,
   WORKBUDDYAI_AUTH_FILE_ENV,
   WORKBUDDYAI_AUTH_FILENAME,
   WORKBUDDYAI_DESKTOP_AUTH_BASENAME,
@@ -181,6 +185,7 @@ export function apply(ctx: Context, config: Config): void {
     ...config.authFile === undefined ? {} : { desktopPath: config.authFile },
     refresh: credential => client.refreshToken(credential),
   })
+  const oauth = new WorkBuddyAiOAuthLogin(client)
 
   // Prices and the omitted-model rows come from the app's product configuration,
   // resolved once at startup: it is a cache the app rewrites on its own schedule,
@@ -284,6 +289,24 @@ export function apply(ctx: Context, config: Config): void {
         persistScope?.(scope)
         refreshModels()
       },
+      loginStart: () => oauth.start(),
+      loginPoll: async () => {
+        const result = await oauth.poll()
+        if ('pending' in result) return { pending: true as const }
+        await store.importCredential(result.auth)
+        try {
+          catalog.setUpstream(await client.fetchModels(result.auth))
+        } catch {
+          // Static fallback catalog remains until the next successful fetch.
+        }
+        refreshModels()
+        return { done: true as const }
+      },
+      logout: async () => {
+        oauth.cancel()
+        await store.logout()
+        refreshModels()
+      },
     }, controlKey)
   })
 
@@ -317,6 +340,7 @@ export function apply(ctx: Context, config: Config): void {
   let stopped = false
   ctx.effect(() => () => {
     stopped = true
+    oauth.cancel()
     void shim.close()
     void clearHostHeartbeat()
   })

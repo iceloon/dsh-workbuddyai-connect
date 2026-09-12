@@ -1,7 +1,7 @@
 {
   "name": "dsh-workbuddyai-connect",
   "displayName": "DSH WorkBuddy AI Connect",
-  "description": "将 WorkBuddy AI 桌面 App（国际版）的模型接入 DeepSeek Harness，默认只列出免费模型 — bring WorkBuddy AI (international) models into DeepSeek Harness, free models by default.",
+  "description": "将 WorkBuddy AI（国际版）模型接入 DeepSeek Harness，支持浏览器 OAuth，默认只列出免费模型 — WorkBuddy AI (international) models for DeepSeek Harness, browser OAuth, free models by default.",
   "version": "0.1.0",
   "author": "iceloon",
   "keywords": [

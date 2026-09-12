@@ -68,7 +68,12 @@ export async function workBuddyAiWebStatus(
   deps: WorkBuddyAiStatusRouteOptions,
 ): Promise<WorkBuddyAiWebStatus> {
   const authStatus = await deps.store.status()
-  if (authStatus.state !== 'signed-in') return { status: 'signed-out' }
+  if (authStatus.state !== 'signed-in') {
+    return {
+      status: 'signed-out',
+      ...deps.controlKey === undefined ? {} : { controlKey: deps.controlKey },
+    }
+  }
 
   const catalog = deps.catalog
   const product = catalog.product()

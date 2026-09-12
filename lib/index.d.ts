@@ -68,6 +68,11 @@ declare function defaultDesktopAuthPath(): string | undefined;
  */
 declare function parseWorkBuddyAiAuth(text: string): WorkBuddyAiCredential | undefined;
 /**
+ * Turn the official CLI `/v2/plugin/auth/token` payload into a credential.
+ * Identity fields come from the access-token JWT; the desktop file is not used.
+ */
+declare function credentialFromPluginToken(data: Record<string, unknown>): WorkBuddyAiCredential;
+/**
  * Read-only credential store with demand-driven refresh.
  *
  * Refresh policy: refresh only when the access token is inside the margin (or
@@ -107,6 +112,8 @@ declare class WorkBuddyAiCredentialStore {
   status(): Promise<WorkBuddyAiAuthStatus>;
   /** Remove the plugin-owned copy; the desktop file is untouched. */
   logout(): Promise<void>;
+  /** Persist a browser-OAuth credential into the plugin-owned copy. */
+  importCredential(credential: WorkBuddyAiCredential): Promise<WorkBuddyAiCredential>;
   private needsRefresh;
   private refreshNow;
   private saveOwn;
@@ -332,6 +339,16 @@ declare class WorkBuddyAiUpstreamClient {
   chatStream(credential: WorkBuddyAiCredential, bodyJson: string, signal?: AbortSignal): Promise<WorkBuddyAiChatResult>;
   /** POST the token-refresh endpoint; the caller merges the outcome. */
   refreshToken(credential: WorkBuddyAiCredential): Promise<WorkBuddyAiRefreshOutcome>;
+  /** POST the official CLI login start; returns the browser `authUrl`. */
+  startPluginLogin(nonce: string): Promise<{
+    state: string;
+    authUrl: string;
+  }>;
+  /**
+   * GET the CLI login token. Envelope code `11217` means the browser has not
+   * finished yet — returns `undefined` so the caller can poll again.
+   */
+  pollPluginToken(state: string): Promise<Record<string, unknown> | undefined>;
   /**
    * GET the personal model catalog from the region's own path and keep the
    * `cli` agent's models only.
@@ -753,6 +770,40 @@ declare class WorkBuddyAiProbeService {
   probe(modelId: string, manualConsent?: boolean): Promise<WorkBuddyAiProbeStatus>;
 }
 //#endregion
+//#region src/oauth.d.ts
+/** Give up if the browser never finishes. */
+declare const LOGIN_TIMEOUT_MS: number;
+/** Upstream client surface this helper needs. */
+type WorkBuddyAiOAuthClient = Pick<WorkBuddyAiUpstreamClient, 'startPluginLogin' | 'pollPluginToken'>;
+/** One poll tick: still waiting, or a credential ready to import. */
+type WorkBuddyAiOAuthPoll = {
+  pending: true;
+} | {
+  auth: WorkBuddyAiCredential;
+};
+/**
+ * In-process CLI login. One instance per plugin; overlapping `start()` calls
+ * replace the previous wait.
+ */
+declare class WorkBuddyAiOAuthLogin {
+  private readonly client;
+  private readonly open;
+  private waiting;
+  constructor(client: WorkBuddyAiOAuthClient, open?: (url: string) => boolean);
+  /** Begin a login and try to open the browser. */
+  start(): Promise<{
+    authUrl: string;
+    opened: boolean;
+  }>;
+  /**
+   * One poll of the login `state`. `pending` means the user has not finished;
+   * otherwise the caller must persist {@link WorkBuddyAiOAuthPoll.auth}.
+   */
+  poll(): Promise<WorkBuddyAiOAuthPoll>;
+  /** Drop an in-flight login without touching stored credentials. */
+  cancel(): void;
+}
+//#endregion
 //#region src/host-heartbeat.d.ts
 /**
  * Host-side heartbeat: a small JSON file written under `$DSH_HOME` once the
@@ -897,6 +948,7 @@ type WorkBuddyAiModelScope$1 = 'free' | 'all';
 /** The JSON document the plugin card renders. */
 type WorkBuddyAiWebStatus = {
   status: 'signed-out';
+  controlKey?: string;
 } | {
   status: 'signed-in';
   nickname?: string;
@@ -938,6 +990,12 @@ type WorkBuddyAiControlAction = {
 } | {
   action: 'setScope';
   scope: WorkBuddyAiModelScope$1;
+} | {
+  action: 'loginStart';
+} | {
+  action: 'loginPoll';
+} | {
+  action: 'logout';
 };
 //#endregion
 //#region src/index.d.ts
@@ -984,4 +1042,4 @@ declare const Config: z<Config>;
  */
 declare function apply(ctx: Context, config: Config): void;
 //#endregion
-export { BUILTIN_FREE_MODELS, Config, FALLBACK_EXTRA_MODELS, FALLBACK_FREE_MODEL_IDS, FALLBACK_WORKBUDDYAI_MODELS, PROBE_EFFORT_CANDIDATES, type ProbeAttempt, type ProbeOutcome, type ProbeSender, type UpstreamErrorKind, WORKBUDDYAI_AUTH_FILENAME, WORKBUDDYAI_AUTH_FILE_ENV, WORKBUDDYAI_CONTROL_PATH, WORKBUDDYAI_DESKTOP_AUTH_BASENAME, WORKBUDDYAI_DISPLAY_NAME, WORKBUDDYAI_HOST_HEARTBEAT_FILENAME, WORKBUDDYAI_PROBE_FILENAME, WORKBUDDYAI_PROVIDER, WORKBUDDYAI_SETTINGS_NS, WORKBUDDYAI_STATUS_PATH, type WorkBuddyAiAdapter, type WorkBuddyAiAuthStatus, WorkBuddyAiCatalog, type WorkBuddyAiChatResult, type WorkBuddyAiControlAction, type WorkBuddyAiCredential, WorkBuddyAiCredentialStore, type WorkBuddyAiCredits, type WorkBuddyAiEffort, type WorkBuddyAiHostHeartbeat, type WorkBuddyAiModelBilling, type WorkBuddyAiModelInfo, type WorkBuddyAiModelReasoning, type WorkBuddyAiModelScope, type WorkBuddyAiProbeRecord, WorkBuddyAiProbeService, type WorkBuddyAiProbeStatus, WorkBuddyAiProbeStore, type WorkBuddyAiProbeValidation, type WorkBuddyAiProductConfig, type WorkBuddyAiProductModel, type WorkBuddyAiRefreshOutcome, type WorkBuddyAiRegion, type WorkBuddyAiShim, WorkBuddyAiUpstreamClient, type WorkBuddyAiUpstreamModel, type WorkBuddyAiWebModelBadge, type WorkBuddyAiWebProbeModel, type WorkBuddyAiWebProbeSection, type WorkBuddyAiWebStatus, apply, classifyUpstreamError, clearHostHeartbeat, composeCatalog, createWorkBuddyAiAdapter, createWorkBuddyAiShim, defaultDesktopAuthCandidates, defaultDesktopAuthPath, fingerprintModel, freeModelIds, inject, isFreeCredits, isHeartbeatProcessAlive, loadProductConfig, name, normalizeCredits, parseProductConfig, parseWorkBuddyAiAuth, prepareChatBody, probeModel, processStartTimeMs, randomSentinel, readHostHeartbeat, reasoningFields, regionOf, workbuddyAiHostHeartbeatPath, workbuddyAiOwnAuthPath, workbuddyAiProbePath, workbuddyAiProductConfigPath };
+export { BUILTIN_FREE_MODELS, Config, FALLBACK_EXTRA_MODELS, FALLBACK_FREE_MODEL_IDS, FALLBACK_WORKBUDDYAI_MODELS, LOGIN_TIMEOUT_MS, PROBE_EFFORT_CANDIDATES, type ProbeAttempt, type ProbeOutcome, type ProbeSender, type UpstreamErrorKind, WORKBUDDYAI_AUTH_FILENAME, WORKBUDDYAI_AUTH_FILE_ENV, WORKBUDDYAI_CONTROL_PATH, WORKBUDDYAI_DESKTOP_AUTH_BASENAME, WORKBUDDYAI_DISPLAY_NAME, WORKBUDDYAI_HOST_HEARTBEAT_FILENAME, WORKBUDDYAI_PROBE_FILENAME, WORKBUDDYAI_PROVIDER, WORKBUDDYAI_SETTINGS_NS, WORKBUDDYAI_STATUS_PATH, type WorkBuddyAiAdapter, type WorkBuddyAiAuthStatus, WorkBuddyAiCatalog, type WorkBuddyAiChatResult, type WorkBuddyAiControlAction, type WorkBuddyAiCredential, WorkBuddyAiCredentialStore, type WorkBuddyAiCredits, type WorkBuddyAiEffort, type WorkBuddyAiHostHeartbeat, type WorkBuddyAiModelBilling, type WorkBuddyAiModelInfo, type WorkBuddyAiModelReasoning, type WorkBuddyAiModelScope, WorkBuddyAiOAuthLogin, type WorkBuddyAiProbeRecord, WorkBuddyAiProbeService, type WorkBuddyAiProbeStatus, WorkBuddyAiProbeStore, type WorkBuddyAiProbeValidation, type WorkBuddyAiProductConfig, type WorkBuddyAiProductModel, type WorkBuddyAiRefreshOutcome, type WorkBuddyAiRegion, type WorkBuddyAiShim, WorkBuddyAiUpstreamClient, type WorkBuddyAiUpstreamModel, type WorkBuddyAiWebModelBadge, type WorkBuddyAiWebProbeModel, type WorkBuddyAiWebProbeSection, type WorkBuddyAiWebStatus, apply, classifyUpstreamError, clearHostHeartbeat, composeCatalog, createWorkBuddyAiAdapter, createWorkBuddyAiShim, credentialFromPluginToken, defaultDesktopAuthCandidates, defaultDesktopAuthPath, fingerprintModel, freeModelIds, inject, isFreeCredits, isHeartbeatProcessAlive, loadProductConfig, name, normalizeCredits, parseProductConfig, parseWorkBuddyAiAuth, prepareChatBody, probeModel, processStartTimeMs, randomSentinel, readHostHeartbeat, reasoningFields, regionOf, workbuddyAiHostHeartbeatPath, workbuddyAiOwnAuthPath, workbuddyAiProbePath, workbuddyAiProductConfigPath };
