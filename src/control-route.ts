@@ -39,6 +39,12 @@ export interface WorkBuddyAiControlRouteOptions {
   clearProbe: () => void
   /** Switch the billing policy; the caller re-registers the affected catalog. */
   setScope: (scope: WorkBuddyAiModelScope) => void
+  /** Start a browser OAuth login; returns the URL the card should open. */
+  loginStart: () => Promise<{ authUrl: string }>
+  /** Poll the in-flight login; `pending` until the browser finishes. */
+  loginPoll: () => Promise<{ pending: true } | { done: true }>
+  /** Drop the plugin-owned credential copy. */
+  logout: () => Promise<void>
 }
 
 /** Mint the per-process control key. */
@@ -74,7 +80,7 @@ async function readBody(req: IncomingMessage): Promise<string | undefined> {
 }
 
 /** Parse and shape-check an action; unknown fields are ignored, not trusted. */
-function parseAction(text: string): WorkBuddyAiControlAction | undefined {
+export function parseAction(text: string): WorkBuddyAiControlAction | undefined {
   let parsed: unknown
   try {
     parsed = JSON.parse(text)
@@ -97,6 +103,9 @@ function parseAction(text: string): WorkBuddyAiControlAction | undefined {
     if (typeof model !== 'string' || model.trim() === '') return undefined
     return { action: 'probe', model: model.trim() }
   }
+  if (action === 'loginStart') return { action: 'loginStart' }
+  if (action === 'loginPoll') return { action: 'loginPoll' }
+  if (action === 'logout') return { action: 'logout' }
   return undefined
 }
 
@@ -143,6 +152,24 @@ export function workBuddyAiControlHandler(
           return
         case 'probe':
           json(res, 200, await deps.probe(action.model))
+          return
+        case 'loginStart': {
+          const started = await deps.loginStart()
+          json(res, 200, { state: 'ok', authUrl: started.authUrl })
+          return
+        }
+        case 'loginPoll': {
+          const result = await deps.loginPoll()
+          if ('pending' in result) {
+            json(res, 200, { state: 'ok', pending: true })
+            return
+          }
+          json(res, 200, { state: 'ok' })
+          return
+        }
+        case 'logout':
+          await deps.logout()
+          json(res, 200, { state: 'ok' })
           return
       }
     } catch (error: unknown) {

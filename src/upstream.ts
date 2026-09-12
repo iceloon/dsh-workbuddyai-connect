@@ -329,6 +329,22 @@ function chatHeaders(credential: WorkBuddyAiCredential): Record<string, string> 
   }
 }
 
+/** Unauthenticated CLI-login headers; no Bearer, no refresh token. */
+function pluginAuthHeaders(): Record<string, string> {
+  return {
+    'Accept': '*/*',
+    'Content-Type': 'application/json',
+    'X-Requested-With': 'XMLHttpRequest',
+    'Origin': GLOBAL_BASE,
+    'Referer': `${GLOBAL_BASE}/`,
+    'User-Agent': CLIENT_UA,
+    'X-No-Authorization': 'true',
+    'X-No-User-Id': 'true',
+    'X-No-Enterprise-Id': 'true',
+    'X-No-Department-Info': 'true',
+  }
+}
+
 /** Refresh-endpoint headers; X-Refresh-Token appears here and nowhere else. */
 function refreshHeaders(credential: WorkBuddyAiCredential): Record<string, string> {
   const headers: Record<string, string> = {
@@ -548,6 +564,50 @@ export class WorkBuddyAiUpstreamClient {
     if (typeof data['expiresIn'] === 'number' && data['expiresIn'] > 0) outcome.expiresInSec = data['expiresIn']
     if (typeof data['domain'] === 'string' && data['domain'] !== '') outcome.domain = data['domain']
     return outcome
+  }
+
+  /** POST the official CLI login start; returns the browser `authUrl`. */
+  async startPluginLogin(nonce: string): Promise<{ state: string; authUrl: string }> {
+    const response = await fetch(
+      `${GLOBAL_BASE}/v2/plugin/auth/state?platform=CLI&nonce=${encodeURIComponent(nonce)}`,
+      {
+        method: 'POST',
+        headers: pluginAuthHeaders(),
+        signal: AbortSignal.timeout(JSON_TIMEOUT_MS),
+      },
+    )
+    const envelope = await readEnvelope(response)
+    if (!response.ok || envelope.code !== 0) throw envelopeError(response.status, envelope)
+    const data = typeof envelope.data === 'object' && envelope.data !== null
+      ? envelope.data as Record<string, unknown>
+      : {}
+    const state = typeof data['state'] === 'string' ? data['state'] : ''
+    const authUrl = typeof data['authUrl'] === 'string' ? data['authUrl'] : ''
+    if (state === '' || authUrl === '') {
+      throw new Error('workbuddyai login start missing state/authUrl')
+    }
+    return { state, authUrl }
+  }
+
+  /**
+   * GET the CLI login token. Envelope code `11217` means the browser has not
+   * finished yet — returns `undefined` so the caller can poll again.
+   */
+  async pollPluginToken(state: string): Promise<Record<string, unknown> | undefined> {
+    const response = await fetch(
+      `${GLOBAL_BASE}/v2/plugin/auth/token?state=${encodeURIComponent(state)}`,
+      {
+        headers: pluginAuthHeaders(),
+        signal: AbortSignal.timeout(JSON_TIMEOUT_MS),
+      },
+    )
+    const envelope = await readEnvelope(response)
+    if (envelope.code === 11217) return undefined
+    if (!response.ok || envelope.code !== 0) throw envelopeError(response.status, envelope)
+    if (typeof envelope.data !== 'object' || envelope.data === null) {
+      throw new Error('workbuddyai login token returned no data')
+    }
+    return envelope.data as Record<string, unknown>
   }
 
   /**

@@ -1,10 +1,14 @@
 /**
  * WorkBuddy AI (international) credential resolution.
  *
- * The primary source is the WorkBuddy **international** desktop app's own auth
- * file, read-only; a plugin-owned copy under `$DSH_HOME` holds token refreshes
- * so the desktop file is never written. The effective credential is whichever
- * of the two expires later, so a refresh by either side wins.
+ * Credentials come from either:
+ * 1. Browser OAuth (official CLI login), saved as a plugin-owned copy under
+ *    `$DSH_HOME` — this is the path that does not need the desktop app.
+ * 2. The WorkBuddy **international** desktop app's own auth file, read-only;
+ *    the same plugin-owned copy also holds token refreshes so the desktop file
+ *    is never written.
+ * The effective credential is whichever of the two expires later, so a refresh
+ * by either side wins.
  *
  * International vs domestic: the two deployments write different auth files in
  * the same directory — `workbuddy-desktop-ai.info` (domain `www.workbuddy.ai`,
@@ -205,6 +209,49 @@ export function parseWorkBuddyAiAuth(text: string): WorkBuddyAiCredential | unde
   }
 }
 
+/** Decode a JWT payload without verifying the signature (identity claims only). */
+function jwtPayload(token: string): Record<string, unknown> | undefined {
+  const parts = token.split('.')
+  if (parts.length < 2 || parts[1] === undefined || parts[1] === '') return undefined
+  try {
+    const json = Buffer.from(parts[1], 'base64url').toString('utf8')
+    const parsed: unknown = JSON.parse(json)
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return undefined
+    return parsed as Record<string, unknown>
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Turn the official CLI `/v2/plugin/auth/token` payload into a credential.
+ * Identity fields come from the access-token JWT; the desktop file is not used.
+ */
+export function credentialFromPluginToken(data: Record<string, unknown>): WorkBuddyAiCredential {
+  const accessToken = typeof data['accessToken'] === 'string' ? data['accessToken'] : ''
+  if (accessToken === '') throw new Error('workbuddyai plugin token missing accessToken')
+  const payload = jwtPayload(accessToken) ?? {}
+  const expiresIn = typeof data['expiresIn'] === 'number' ? data['expiresIn'] : 0
+  const uid = optionalString(payload['userId'])
+    ?? optionalString(payload['uid'])
+    ?? optionalString(payload['sub'])
+    ?? ''
+  const enterpriseId = optionalString(payload['enterpriseId']) ?? optionalString(data['enterpriseId'])
+  const nickname = optionalString(payload['nickname'])
+    ?? optionalString(payload['name'])
+    ?? optionalString(data['nickname'])
+  return {
+    accessToken,
+    refreshToken: typeof data['refreshToken'] === 'string' ? data['refreshToken'] : '',
+    expiresAtMs: expiresIn > 0 ? Date.now() + expiresIn * 1000 : 0,
+    domain: optionalString(data['domain']) ?? 'www.workbuddy.ai',
+    uid,
+    ...enterpriseId === undefined ? {} : { enterpriseId },
+    ...nickname === undefined ? {} : { nickname },
+    source: 'dsh',
+  }
+}
+
 /** Serialize the plugin-owned copy. */
 function ownDocument(credential: WorkBuddyAiCredential): OwnDocument {
   return { version: OWN_FORMAT_VERSION, credential }
@@ -329,7 +376,8 @@ export class WorkBuddyAiCredentialStore {
       const desktop = candidates.length > 0 ? candidates.join(' or ') : '(no desktop path on this platform)'
       throw new Error(
         'workbuddyai: no signed-in WorkBuddy AI (international) account found;'
-        + ` sign in once in the WorkBuddy international desktop app (expected ${desktop}`
+        + ' connect from the plugin card, run `dsh-workbuddyai-connect login`,'
+        + ` or sign in once in the WorkBuddy international desktop app (expected ${desktop}`
         + ` or ${WORKBUDDYAI_AUTH_FILE_ENV})`,
       )
     }
@@ -365,6 +413,17 @@ export class WorkBuddyAiCredentialStore {
     await rm(`${this.ownPath}.lock`, { force: true })
   }
 
+  /** Persist a browser-OAuth credential into the plugin-owned copy. */
+  async importCredential(credential: WorkBuddyAiCredential): Promise<WorkBuddyAiCredential> {
+    const next: WorkBuddyAiCredential = {
+      ...credential,
+      source: 'dsh',
+      domain: credential.domain === '' ? 'www.workbuddy.ai' : credential.domain,
+    }
+    await this.saveOwn(next)
+    return next
+  }
+
   private needsRefresh(credential: WorkBuddyAiCredential): boolean {
     if (credential.expiresAtMs <= 0) return true
     return Date.now() + this.refreshMarginMs >= credential.expiresAtMs
@@ -375,7 +434,7 @@ export class WorkBuddyAiCredentialStore {
       if (credential.expiresAtMs > Date.now() + 30_000) return credential
       throw new Error(
         'workbuddyai: access token expired and no refresh token is stored;'
-        + ' sign in again in the WorkBuddy international desktop app',
+        + ' connect again from the plugin card or sign in in the WorkBuddy international desktop app',
       )
     }
     try {
@@ -396,7 +455,7 @@ export class WorkBuddyAiCredentialStore {
       if (credential.expiresAtMs > Date.now() + 30_000) return credential
       throw new Error(
         `workbuddyai: token refresh failed and the access token is expired (${String(error)});`
-        + ' open the WorkBuddy international desktop app once to sign in again',
+        + ' connect again from the plugin card or open the WorkBuddy international desktop app',
       )
     }
   }

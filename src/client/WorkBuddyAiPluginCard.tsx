@@ -3,9 +3,9 @@
  * configuration.
  *
  * The card is the plugin's only interactive surface. It reports the account and
- * remaining credit, and it owns the two decisions a user actually makes here:
- * which models the picker may show (the free-only filter), and whether reasoning
- * effort may be probed.
+ * remaining credit, starts browser OAuth, and owns the two decisions a user
+ * actually makes here: which models the picker may show (the free-only filter),
+ * and whether reasoning effort may be probed.
  *
  * Every action goes through the host's control route, which re-validates the
  * loopback origin and the in-process key. The card holds no credential and
@@ -36,6 +36,8 @@ export type WorkBuddyAiPluginCardProps = Partial<WorkBuddyAiPluginCardInjected>
 
 /** How often the card re-reads the status document while it is open. */
 const POLL_INTERVAL_MS = 60_000
+/** How often the card polls an in-flight browser login. */
+const LOGIN_POLL_INTERVAL_MS = 2000
 
 const cardStyle: CSSProperties = {
   overflow: 'hidden',
@@ -182,6 +184,8 @@ function modelBadgeLabel(badge: string, t: WorkBuddyAiPluginCardInjected['t']): 
 interface ControlResult {
   ok: boolean
   error?: string
+  authUrl?: string
+  pending?: boolean
 }
 
 /**
@@ -204,13 +208,22 @@ async function postControl(key: string, body: unknown): Promise<ControlResult> {
       const text = await response.text().catch(() => '')
       return { ok: false, error: text.slice(0, 200) || `HTTP ${response.status}` }
     }
-    const payload = await response.json().catch(() => undefined) as { state?: string; reason?: string } | undefined
+    const payload = await response.json().catch(() => undefined) as {
+      state?: string
+      reason?: string
+      authUrl?: string
+      pending?: boolean
+    } | undefined
     // A probe can answer 200 with a non-`ok` state; that is a refusal the card
     // must show, not a success.
     if (payload !== undefined && payload.state !== undefined && payload.state !== 'ok' && payload.state !== 'cleared') {
       return { ok: false, error: payload.reason ?? payload.state }
     }
-    return { ok: true }
+    return {
+      ok: true,
+      ...typeof payload?.authUrl === 'string' && payload.authUrl !== '' ? { authUrl: payload.authUrl } : {},
+      pending: payload?.pending === true,
+    }
   } catch (error: unknown) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) }
   }
@@ -259,6 +272,8 @@ export function WorkBuddyAiPluginCard(props: WorkBuddyAiPluginCardProps): ReactE
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | undefined>(undefined)
+  const [waitingLogin, setWaitingLogin] = useState(false)
+  const [authUrl, setAuthUrl] = useState<string | undefined>(undefined)
   const mounted = useRef(true)
 
   const load = useCallback(async (): Promise<void> => {
@@ -298,7 +313,7 @@ export function WorkBuddyAiPluginCard(props: WorkBuddyAiPluginCardProps): ReactE
   }, [open, load])
 
   const signedIn = status !== undefined && status.status === 'signed-in'
-  const controlKey = signedIn ? status.controlKey : undefined
+  const controlKey = status !== undefined && status.status !== 'error' ? status.controlKey : undefined
   const scope: WorkBuddyAiModelScope = signedIn ? (status.scope ?? 'free') : 'free'
   const probe = signedIn ? status.probe : undefined
   const models = signedIn ? (status.models ?? []) : []
@@ -319,6 +334,44 @@ export function WorkBuddyAiPluginCard(props: WorkBuddyAiPluginCardProps): ReactE
       if (mounted.current) setBusy(false)
     }
   }, [controlKey, load, t])
+
+  const onConnect = useCallback(async (): Promise<void> => {
+    if (controlKey === undefined) return
+    setBusy(true)
+    try {
+      const result = await postControl(controlKey, { action: 'loginStart' })
+      if (!result.ok || result.authUrl === undefined) {
+        setWaitingLogin(false)
+        setError(result.error ?? t('loginFailed', { message: t('requestFailed') }))
+        return
+      }
+      setError(undefined)
+      setAuthUrl(result.authUrl)
+      setWaitingLogin(true)
+      window.open(result.authUrl, '_blank', 'noopener,noreferrer')
+    } finally {
+      if (mounted.current) setBusy(false)
+    }
+  }, [controlKey, t])
+
+  useEffect(() => {
+    if (!waitingLogin || controlKey === undefined) return
+    const timer = setInterval(() => {
+      void (async () => {
+        const result = await postControl(controlKey, { action: 'loginPoll' })
+        if (!result.ok) {
+          setWaitingLogin(false)
+          setError(t('loginFailed', { message: result.error ?? t('requestFailed') }))
+          return
+        }
+        if (result.pending === true) return
+        setWaitingLogin(false)
+        setAuthUrl(undefined)
+        await load()
+      })()
+    }, LOGIN_POLL_INTERVAL_MS)
+    return () => { clearInterval(timer) }
+  }, [waitingLogin, controlKey, load, t])
 
   const onScope = useCallback((next: WorkBuddyAiModelScope): void => {
     void runControl({ action: 'setScope', scope: next })
@@ -360,12 +413,29 @@ export function WorkBuddyAiPluginCard(props: WorkBuddyAiPluginCardProps): ReactE
               ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                   <div style={rowStyle}>
-                    <span style={statusStyle}>{t('signedOut')}</span>
-                    <button type="button" style={buttonStyle} onClick={() => { void load() }} disabled={loading}>
-                      {loading ? t('refreshing') : t('refresh')}
-                    </button>
+                    <span style={statusStyle}>{waitingLogin ? t('connecting') : t('signedOut')}</span>
+                    <span style={{ display: 'flex', gap: 8 }}>
+                      <button type="button" style={buttonStyle} onClick={() => { void load() }} disabled={loading}>
+                        {loading ? t('refreshing') : t('refresh')}
+                      </button>
+                      <button
+                        type="button"
+                        style={buttonStyle}
+                        onClick={() => { void onConnect() }}
+                        disabled={busy || waitingLogin || controlKey === undefined}
+                      >
+                        {t('connect')}
+                      </button>
+                    </span>
                   </div>
                   <p style={bodyStyle}>{t('signedOutHint')}</p>
+                  {authUrl === undefined
+                    ? null
+                    : (
+                      <a href={authUrl} target="_blank" rel="noreferrer" style={{ ...buttonStyle, display: 'inline-block', textDecoration: 'none' }}>
+                        {t('openLogin')}
+                      </a>
+                    )}
                 </div>
               )
               : null}
@@ -400,9 +470,19 @@ export function WorkBuddyAiPluginCard(props: WorkBuddyAiPluginCardProps): ReactE
                           <span style={statusStyle}>
                             {status.nickname === undefined ? t('signedInAs', { nickname: '—' }) : t('signedInAs', { nickname: status.nickname })}
                           </span>
-                          <button type="button" style={buttonStyle} onClick={() => { void load() }} disabled={loading}>
-                            {loading ? t('refreshing') : t('refresh')}
-                          </button>
+                          <span style={{ display: 'flex', gap: 8 }}>
+                            <button type="button" style={buttonStyle} onClick={() => { void load() }} disabled={loading}>
+                              {loading ? t('refreshing') : t('refresh')}
+                            </button>
+                            <button
+                              type="button"
+                              style={buttonStyle}
+                              onClick={() => { void runControl({ action: 'logout' }) }}
+                              disabled={busy}
+                            >
+                              {t('disconnect')}
+                            </button>
+                          </span>
                         </div>
                         {status.expiresAt === undefined
                           ? null

@@ -82,7 +82,7 @@ export type WorkBuddyAiModelScope = 'free' | 'all'
 
 /** The JSON document the plugin card renders. */
 export type WorkBuddyAiWebStatus =
-  | { status: 'signed-out' }
+  | { status: 'signed-out'; controlKey?: string }
   | {
     status: 'signed-in'
     nickname?: string
@@ -119,3 +119,6 @@ export type WorkBuddyAiControlAction =
   | { action: 'probe'; model: string }
   | { action: 'clearProbe' }
   | { action: 'setScope'; scope: WorkBuddyAiModelScope }
+  | { action: 'loginStart' }
+  | { action: 'loginPoll' }
+  | { action: 'logout' }
