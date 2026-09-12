@@ -21,7 +21,7 @@
 import type { WorkBuddyAiUpstreamModel } from './upstream.ts'
 import { normalizeCredits } from './upstream.ts'
 import type { WorkBuddyAiProductConfig } from './product-config.ts'
-import { BUILTIN_FREE_MODELS, freeModelIds, productModelById, productModelToCatalogRow } from './product-config.ts'
+import { BUILTIN_CREDITS, BUILTIN_FREE_MODELS, freeModelIds, productModelById, productModelToCatalogRow } from './product-config.ts'
 
 /** One model entry the adapter exposes. */
 export type WorkBuddyAiModelInfo = WorkBuddyAiUpstreamModel
@@ -76,31 +76,36 @@ export function composeCatalog(
   const source = upstream.length > 0 ? upstream : FALLBACK_WORKBUDDYAI_MODELS
   for (const model of source) byId.set(model.id, model)
 
-  // Step 2: models the catalog endpoint omits. Only added when the product
-  // configuration actually describes them, so the fallback table is not the
-  // authority once a real config is loaded.
-  if (productConfig.source === 'cache') {
-    for (const id of free) {
-      if (byId.has(id)) continue
+  // Step 2: models the catalog endpoint omits (`deepseek-v4.1-flash`,
+  // `hy4-preview-f`). Prefer a product-config row when the app cache is
+  // present; otherwise inject the built-in free table. Skipping this when
+  // `source === 'builtin'` left a live catalog (18 models, no DeepSeek)
+  // filtered down to only `hy3` after uninstalling the desktop app.
+  for (const id of free) {
+    if (byId.has(id)) continue
+    if (productConfig.source === 'cache') {
       const row = productModelById(productConfig, id)
-      if (row === undefined) continue
-      const built = productModelToCatalogRow(row)
-      if (built !== undefined) byId.set(built.id, built)
+      const built = row === undefined ? undefined : productModelToCatalogRow(row)
+      if (built !== undefined) {
+        byId.set(built.id, built)
+        continue
+      }
     }
+    const builtin = BUILTIN_FREE_MODELS.find(model => model.id === id)
+    if (builtin !== undefined) byId.set(id, builtin)
   }
 
-  // Step 3: the product configuration owns the price verdict. Its rate
-  // replaces the catalog's own, and `free` is taken from the policy's
-  // allow-list so a row the config prices `x0.00` is marked free even when the
-  // catalog reported a different rate for it.
+  // Step 3: price authority is the product cache, then the built-in rate
+  // table. Catalog `x0.00` is not trusted (`hy4-preview` is x0.29).
   for (const [id, model] of byId) {
     const row = productModelById(productConfig, id)
-    if (row === undefined) continue
+    const credits = row?.credits ?? BUILTIN_CREDITS[id]
+    if (credits === undefined && row === undefined) continue
     byId.set(id, {
       ...model,
       billing: {
         ...model.billing,
-        ...row.credits === undefined ? {} : { credits: row.credits },
+        ...credits === undefined ? {} : { credits },
         free: free.has(id),
       },
     })

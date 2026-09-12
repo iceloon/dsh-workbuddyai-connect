@@ -48,6 +48,7 @@ export {
   type WorkBuddyAiModelScope,
 } from './catalog.ts'
 export {
+  BUILTIN_CREDITS,
   BUILTIN_FREE_MODELS,
   FALLBACK_EXTRA_MODELS,
   FALLBACK_FREE_MODEL_IDS,

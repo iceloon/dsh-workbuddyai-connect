@@ -65,6 +65,35 @@ describe('composeCatalog', () => {
     expect(ids).toContain('hy3')
   })
 
+  it('injects built-in DeepSeek when a live catalog omits it and the app cache is gone', () => {
+    const ids = composeCatalog([paidHy4Preview, hy3], {
+      productConfig: { source: 'builtin', models: [] },
+      scope: 'free',
+    }).map(model => model.id)
+    expect(ids).toContain('deepseek-v4.1-flash')
+    expect(ids).toContain('hy4-preview-f')
+    expect(ids).toContain('hy3')
+    expect(ids).not.toContain('hy4-preview')
+  })
+
+  it('stamps built-in rates so free/paid lists follow x0.00 vs paid', () => {
+    const free = composeCatalog([paidHy4Preview, hy3], {
+      productConfig: { source: 'builtin', models: [] },
+      scope: 'free',
+    })
+    expect(free.find(model => model.id === 'deepseek-v4.1-flash')?.billing?.credits).toBe('x0.00')
+    expect(free.find(model => model.id === 'hy3')?.billing?.credits).toBe('x0.00')
+    expect(free.some(model => model.id === 'hy4-preview')).toBe(false)
+
+    const all = composeCatalog([paidHy4Preview, hy3], {
+      productConfig: { source: 'builtin', models: [] },
+      scope: 'all',
+    })
+    expect(all.find(model => model.id === 'hy4-preview')?.billing?.credits).toBe('x0.29')
+    expect(all.find(model => model.id === 'hy4-preview')?.billing?.free).toBe(false)
+    expect(all.find(model => model.id === 'deepseek-v4.1-flash')?.billing?.free).toBe(true)
+  })
+
   it('keeps the built-in free whitelist as a safety net', () => {
     expect(BUILTIN_FREE_MODELS.map(model => model.id)).toEqual([
       'deepseek-v4.1-flash',

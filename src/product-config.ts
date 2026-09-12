@@ -150,6 +150,33 @@ export const FALLBACK_FREE_MODEL_IDS: readonly string[] =
   BUILTIN_FREE_MODELS.map(model => model.id)
 
 /**
+ * Last-known international `credits` multipliers, used when the app cache is
+ * absent. Catalog `x0.00` is not trusted (`hy4-preview` is x0.29 here).
+ */
+export const BUILTIN_CREDITS: Readonly<Record<string, string>> = {
+  'deepseek-v4.1-flash': 'x0.00',
+  'hy4-preview-f': 'x0.00',
+  'hy3': 'x0.00',
+  'hy4-preview': 'x0.29',
+  'fast-model': 'x0.34',
+  'balanced-model': 'x0.59',
+  'primary-model': 'x3.31',
+  'deep-model': 'x3.33',
+  'gpt-6-astra': 'x6.67',
+  'gpt-5.6-sol': 'x3.47',
+  'gpt-5.6-terra': 'x1.39',
+  'gpt-5.6-luna': 'x0.14',
+  'gpt-5.5': 'x3.31',
+  'gpt-5.4': 'x1.65',
+  'gpt-5.3-codex': 'x1.25',
+  'gemini-3.5-flash': 'x0.99',
+  'glm-5.3': 'x0.79',
+  'glm-5.2': 'x0.79',
+  'kimi-k3': 'x1.62',
+  'kimi-k2.6': 'x0.52',
+}
+
+/**
  * The subset the catalog endpoint does not return, so they must be injected.
  *
  * `hy3` is absent from this list because the endpoint does list it; the other
@@ -236,12 +263,12 @@ export function parseProductConfig(text: string): WorkBuddyAiProductConfig | und
   }
 }
 
-/** The built-in configuration: only the free rows, with no cache behind them. */
+/** The built-in configuration: free rows with full metadata, plus paid rates. */
 function builtinConfig(): WorkBuddyAiProductConfig {
   const models: WorkBuddyAiProductModel[] = BUILTIN_FREE_MODELS.map(model => ({
     id: model.id,
     name: model.name,
-    credits: 'x0.00',
+    credits: BUILTIN_CREDITS[model.id] ?? 'x0.00',
     contextWindow: model.contextWindow,
     maxTokens: model.maxTokens,
     supportsImages: model.supportsImages,
@@ -251,6 +278,21 @@ function builtinConfig(): WorkBuddyAiProductConfig {
     ...model.reasoning?.defaultEffort === undefined ? {} : { defaultEffort: model.reasoning.defaultEffort },
     canDisableThinking: model.reasoning?.canDisableThinking === true,
   }))
+  const seen = new Set(models.map(model => model.id))
+  for (const [id, credits] of Object.entries(BUILTIN_CREDITS)) {
+    if (seen.has(id)) continue
+    models.push({
+      id,
+      name: id,
+      credits,
+      contextWindow: 0,
+      maxTokens: 0,
+      supportsImages: false,
+      supportsReasoning: false,
+      onlyReasoning: false,
+      canDisableThinking: false,
+    })
+  }
   return { source: 'builtin', models }
 }
 
@@ -284,7 +326,6 @@ export function creditsAreFree(credits: string | undefined): boolean {
  * be able to turn the free-only filter into a no-op.
  */
 export function freeModelIds(config: WorkBuddyAiProductConfig): readonly string[] {
-  if (config.source === 'builtin') return FALLBACK_FREE_MODEL_IDS
   const free = config.models.filter(model => creditsAreFree(model.credits)).map(model => model.id)
   // An empty answer from a cache that parsed but prices nothing as free would
   // silently hide every model; the built-in list is the safer answer.

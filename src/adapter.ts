@@ -226,7 +226,9 @@ export function createWorkBuddyAiAdapter(options: WorkBuddyAiAdapterOptions): Wo
   // through the constructed provider.
   const provider: Provider = { ...base, getModels: () => buildModels() }
 
-  const profile: ResolvedPiAiProviderProfile = {
+  // Extra fields are required at runtime by dsh-llm-pi-ai 0.1.5 (`modelErrors.get`)
+  // and ignored by 0.1.0. Cast so both type lines accept the same object.
+  const profile = {
     provider: WORKBUDDYAI_PROVIDER,
     displayName: WORKBUDDYAI_DISPLAY_NAME,
     streamIdleTimeoutMs: WORKBUDDYAI_STREAM_IDLE_TIMEOUT_MS,
@@ -234,20 +236,32 @@ export function createWorkBuddyAiAdapter(options: WorkBuddyAiAdapterOptions): Wo
     configuredMaxTokens: new Map(),
     maxRequestImageBytes: MAX_REQUEST_IMAGE_BYTES,
     piProvider: provider,
-  }
+    modelErrors: new Map<string, string>(),
+    requestImagePixelBudget: 4_194_304,
+    requestImageMaxBytes: 1_048_576,
+  } as ResolvedPiAiProviderProfile
 
   let profiles = new Map<string, ResolvedPiAiProviderProfile>([[WORKBUDDYAI_PROVIDER, profile]])
 
   const adapter = new WorkBuddyAiPiAiAdapter(catalog, {
     profiles: () => profiles,
-    // Resolve the shim's per-process shared secret as the OpenAI apiKey so pi-ai
-    // sends it as `Authorization: Bearer <shared-secret>`. The shim validates
-    // this before forwarding and resolves the real WorkBuddy token itself via
-    // the store, so the secret never reaches upstream. The provider declares no
-    // auth of its own, so this hook is the only credential source.
     resolveApiKey: async () => shim.token(),
     ...resolveAttachments === undefined ? {} : { resolveAttachments },
-  })
+    auth: {
+      credentials: {
+        async read() { return undefined },
+        async list() { return [] },
+        async modify() {
+          throw new Error('dsh-workbuddyai-connect: the workbuddyai route has no pi-ai credential lifecycle')
+        },
+        async delete() {},
+      },
+      authContext: {
+        async env() { return undefined },
+        async fileExists() { return false },
+      },
+    },
+  } as ConstructorParameters<typeof PiAiAdapter>[0])
 
   return {
     adapter,
