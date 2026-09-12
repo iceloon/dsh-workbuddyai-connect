@@ -61,7 +61,37 @@ const headerStyle: CSSProperties = {
 const headTextStyle: CSSProperties = { display: 'flex', minWidth: 0, flexDirection: 'column', gap: 3 }
 const nameStyle: CSSProperties = { fontSize: 14, lineHeight: '20px', fontWeight: 600 }
 const descriptionStyle: CSSProperties = { fontSize: 13, lineHeight: '18px', color: 'var(--dsw-alias-label-tertiary)' }
-const chevronStyle: CSSProperties = { flex: '0 0 auto', fontSize: 18, lineHeight: 1, transition: 'transform 120ms ease' }
+const chevronStyle: CSSProperties = {
+  flex: 'none',
+  color: 'var(--dsw-alias-label-tertiary)',
+  transition: 'transform 160ms ease',
+}
+
+/**
+ * Official DSH settings-card chevron (`IconChevronDownOutline14`).
+ *
+ * Inlined so the plugin card does not depend on `dsh-client-ui-primitives`
+ * being in the ModuleLoader table. The path is the same 14×14 glyph the
+ * built-in PluginCard uses.
+ */
+function ChevronDownOutline14(props: { open: boolean }): ReactElement {
+  return (
+    <svg
+      width={14}
+      height={14}
+      viewBox="0 0 14 14"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+      style={{ ...chevronStyle, transform: props.open ? 'rotate(180deg)' : 'none' }}
+    >
+      <path
+        d="M11.8486 5.5L11.4238 5.92383L8.69727 8.65137C8.44157 8.90706 8.21562 9.13382 8.01172 9.29785C7.79912 9.46883 7.55595 9.61756 7.25 9.66602C7.08435 9.69222 6.91565 9.69222 6.75 9.66602C6.44405 9.61756 6.20088 9.46883 5.98828 9.29785C5.78438 9.13382 5.55843 8.90706 5.30273 8.65137L2.57617 5.92383L2.15137 5.5L3 4.65137L3.42383 5.07617L6.15137 7.80273C6.42595 8.07732 6.59876 8.24849 6.74023 8.3623C6.87291 8.46904 6.92272 8.47813 6.9375 8.48047C6.97895 8.48703 7.02105 8.48703 7.0625 8.48047C7.07728 8.47813 7.12709 8.46904 7.25977 8.3623C7.40124 8.24849 7.57405 8.07732 7.84863 7.80273L10.5762 5.07617L11 4.65137L11.8486 5.5Z"
+        fill="currentColor"
+      />
+    </svg>
+  )
+}
 const cardBodyStyle: CSSProperties = { borderTop: '1px solid var(--dsw-alias-border-l2)', padding: '16px 14px 18px' }
 const bodyStyle: CSSProperties = { margin: 0, fontSize: 14, lineHeight: '22px', color: 'var(--dsw-alias-label-secondary)' }
 const rowStyle: CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }
@@ -318,7 +348,7 @@ export function WorkBuddyAiPluginCard(props: WorkBuddyAiPluginCardProps): ReactE
           <span style={nameStyle}>{t('title')}</span>
           <span style={descriptionStyle}>{t('intro')}</span>
         </span>
-        <span style={{ ...chevronStyle, transform: open ? 'rotate(180deg)' : 'none' }} aria-hidden="true">⌄</span>
+        <ChevronDownOutline14 open={open} />
       </button>
 
       {open
