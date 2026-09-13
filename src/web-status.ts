@@ -1,7 +1,8 @@
 /**
  * Same-origin status route for the plugin card: sign-in state, token expiry, the
  * active billing policy, and remaining credit, fetched by the browser half. The
- * route answers loopback browser requests only and never carries token material.
+ * route answers loopback (or explicitly allowed LAN) browser requests only
+ * and never carries token material.
  *
  * @module dsh-workbuddyai-connect/web-status
  */
@@ -13,7 +14,7 @@ import type { WorkBuddyAiCredentialStore } from './auth.ts'
 import type { WorkBuddyAiUpstreamClient } from './upstream.ts'
 import { normalizeCredits } from './upstream.ts'
 import type { WorkBuddyAiCatalog } from './catalog.ts'
-import { hostIsLoopback, originIsLoopback } from './loopback.ts'
+import { requestIsTrusted } from './loopback.ts'
 import { WORKBUDDYAI_STATUS_PATH } from './status-paths.ts'
 import type { WorkBuddyAiWebModelBadge, WorkBuddyAiWebProbeSection, WorkBuddyAiWebStatus } from './status-paths.ts'
 
@@ -33,6 +34,11 @@ export interface WorkBuddyAiStatusRouteOptions {
   probe?: () => WorkBuddyAiWebProbeSection
   /** In-process key authorizing control writes. */
   controlKey?: string
+  /**
+   * Extra Host/Origin authorities for LAN DSH Web. Read live so a settings
+   * edit applies without remounting the route. Default empty = loopback only.
+   */
+  allowedHosts?: () => readonly string[]
 }
 
 /** Redact token-like content before it crosses to the browser. */
@@ -55,8 +61,9 @@ function json(res: ServerResponse, status: number, body: unknown): void {
  * DNS-rebinding pages (their Host is the attacker's domain, not loopback); the
  * card's same-origin fetches carry no Origin and pass on Host alone.
  */
-function loopbackRequest(req: IncomingMessage): boolean {
-  return hostIsLoopback(req.headers.host) && originIsLoopback(req.headers.origin)
+function trustedRequest(req: IncomingMessage, allowedHosts: readonly string[]): boolean {
+  const origin = typeof req.headers.origin === 'string' ? req.headers.origin : undefined
+  return requestIsTrusted({ headers: { host: req.headers.host, origin } }, allowedHosts)
 }
 
 /**
@@ -140,7 +147,7 @@ export function workBuddyAiStatusHandler(
       json(res, 405, { error: 'method not allowed' })
       return
     }
-    if (!loopbackRequest(req)) {
+    if (!trustedRequest(req, deps.allowedHosts?.() ?? [])) {
       json(res, 403, { error: 'request-not-trusted' })
       return
     }

@@ -41,7 +41,12 @@ export function openAuthUrl(url: string): boolean {
         ? 'cmd'
         : 'xdg-open'
     const args = process.platform === 'win32' ? ['/c', 'start', '', url] : [url]
-    spawn(command, args, { detached: true, stdio: 'ignore' }).unref()
+    // Headless Linux has no `xdg-open`. spawn's ENOENT is an async `error`
+    // event — try/catch cannot see it — and an unhandled one exits the
+    // whole `dsh web` process after the card already received `authUrl`.
+    spawn(command, args, { detached: true, stdio: 'ignore' })
+      .on('error', () => {})
+      .unref()
     return true
   } catch {
     return false

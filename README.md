@@ -103,6 +103,8 @@ dsh plugin --profile web remove dsh-workbuddy-connect
   config:
     modelScope: free          # 或 all
     probeConsent: false
+    # 局域网打开 DSH Web 时写访问用的 Host（不要写进 LOOPBACK）
+    # allowedHosts: ["192.168.1.10"]
     # authFile: 一般不用。只在桌面凭据不在默认位置时才写绝对路径
 ```
 
@@ -129,7 +131,8 @@ dsh plugin --profile web exec dsh-workbuddyai-connect logout
 | 现象 | 处理 |
 |---|---|
 | 设置里没有这张卡片 / 模型列表没有 WorkBuddy AI | 重启 `dsh web`，不要只刷新浏览器 |
-| 点连接后一直等待 | 用卡片上的「打开登录页」；15 分钟后重试 |
+| 点连接后 `dsh web` 进程退出 | 无头 Linux 没有 `xdg-open` 时请更新到含 spawn `error` 处理的版本；用卡片上的登录链接 |
+| 局域网 IP 打开卡片 403 `request-not-trusted` | 在 `allowedHosts` 里写该 IP/主机名，不要把它加进回环名单 |
 | 登录成功但没有免费模型 | 看 `doctor` 是否读到产品配置；没有缓存时用内置三模型名单 |
 | `doctor` 显示 signed-out | 先 `login`，或确认国际版桌面 App 已登录 |
 | 想用付费模型 | 设置卡片把范围改成「全部模型」，注意会扣积分 |
@@ -140,7 +143,7 @@ dsh plugin --profile web exec dsh-workbuddyai-connect doctor
 
 ## 已知限制
 
-- 在 macOS 的 DSH Web 下验证。Windows / WSL 探测了凭据路径，未实测。
+- 在 macOS 的 DSH Web 下验证。无头 Linux 上「连接」不会再因缺少 `xdg-open` 把进程打崩。Windows / WSL 探测了凭据路径，未实测。
 - 依赖 WorkBuddy 客户端接口（非官方开放 API），上游更新后插件可能要跟着改。
 - 只接国际版。国内版请用 `dsh-workbuddy-connect`。
 

@@ -3,9 +3,9 @@
  *
  * Two guards, because they stop different things:
  *
- * 1. **Loopback Host + Origin**, shared with the status route. This drops
- *    DNS-rebinding pages, whose requests arrive addressed to the attacker's
- *    domain.
+ * 1. **Trusted Host + Origin**, shared with the status route. Loopback is
+ *    always allowed; extra LAN authorities must be listed in `allowedHosts`.
+ *    This drops DNS-rebinding pages, whose Host is the attacker's domain.
  * 2. **An in-process random key**, minted per process and handed only to the
  *    same-origin card. Loopback alone is *not* authentication — any local process
  *    can write `Host: 127.0.0.1` — so a route that can spend the user's credit
@@ -21,7 +21,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
-import { hostIsLoopback, originIsLoopback } from './loopback.ts'
+import { requestIsTrusted } from './loopback.ts'
 import { WORKBUDDYAI_CONTROL_PATH } from './status-paths.ts'
 import type { WorkBuddyAiControlAction, WorkBuddyAiModelScope } from './status-paths.ts'
 
@@ -45,6 +45,11 @@ export interface WorkBuddyAiControlRouteOptions {
   loginPoll: () => Promise<{ pending: true } | { done: true }>
   /** Drop the plugin-owned credential copy. */
   logout: () => Promise<void>
+  /**
+   * Extra Host/Origin authorities for LAN DSH Web. Read live so a settings
+   * edit applies without remounting the route. Default empty = loopback only.
+   */
+  allowedHosts?: () => readonly string[]
 }
 
 /** Mint the per-process control key. */
@@ -122,7 +127,8 @@ export function workBuddyAiControlHandler(
       json(res, 405, { error: 'method not allowed' })
       return
     }
-    if (!hostIsLoopback(req.headers.host) || !originIsLoopback(req.headers.origin)) {
+    const origin = typeof req.headers.origin === 'string' ? req.headers.origin : undefined
+    if (!requestIsTrusted({ headers: { host: req.headers.host, origin } }, deps.allowedHosts?.() ?? [])) {
       json(res, 403, { error: 'request-not-trusted' })
       return
     }

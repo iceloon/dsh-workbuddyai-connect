@@ -162,6 +162,12 @@ export interface Config {
    * location. Only needed when the app keeps its state somewhere unusual.
    */
   productConfigFile?: string
+  /**
+   * Extra Host/Origin authorities for the settings card when DSH Web is
+   * reached over LAN (e.g. `192.168.1.10`). Empty (the default) keeps the
+   * card on loopback only. Never put LAN names into the loopback set.
+   */
+  allowedHosts?: string[]
 }
 
 export const Config: z<Config> = z.object({
@@ -172,6 +178,8 @@ export const Config: z<Config> = z.object({
     .description('Which models to offer: free only (default), or every model including paid ones'),
   productConfigFile: z.string()
     .description('Product configuration supplying model prices (defaults to the app\'s own cache)'),
+  allowedHosts: z.array(z.string()).default([])
+    .description('Extra Host names for the plugin card when DSH Web is opened over LAN (empty = loopback only)'),
 })
 
 /**
@@ -273,6 +281,7 @@ export function apply(ctx: Context, config: Config): void {
       catalog,
       probe: () => probeSection(),
       controlKey,
+      allowedHosts: () => current().allowedHosts ?? [],
     })
     registerWorkBuddyAiControlRoute(webCtx, {
       probe: async modelId => {
@@ -308,6 +317,7 @@ export function apply(ctx: Context, config: Config): void {
         await store.logout()
         refreshModels()
       },
+      allowedHosts: () => current().allowedHosts ?? [],
     }, controlKey)
   })
 

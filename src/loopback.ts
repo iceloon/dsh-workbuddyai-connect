@@ -1,7 +1,8 @@
 /**
- * Shared loopback gates for the plugin's local HTTP surfaces: the loopback shim
- * and the same-origin web-status route. Both are only ever meant to be addressed
- * through the machine's loopback interface.
+ * Shared request gates for the plugin's local HTTP surfaces: the loopback shim
+ * and the same-origin web-status / control routes. Default is loopback-only.
+ * Operators may add extra Host/Origin authorities for LAN DSH Web without
+ * folding those names into {@link LOOPBACK_HOSTS}.
  *
  * @module dsh-workbuddyai-connect/loopback
  */
@@ -47,4 +48,47 @@ export function originIsLoopback(origin: string | undefined): boolean {
   } catch {
     return false
   }
+}
+
+/** Lowercase hostname from a configured authority (`host` or `host:port`). */
+export function normalizeAllowedHost(value: string): string {
+  return hostnameOfHost(value.trim().toLowerCase())
+}
+
+/**
+ * Host is trusted when it is loopback, or an explicitly configured extra
+ * authority. Extra hosts are never folded into {@link LOOPBACK_HOSTS}: listing
+ * a LAN IP there would also accept DNS-rebinding pages that spoof that Host.
+ */
+export function hostIsTrusted(host: string | undefined, allowedHosts: readonly string[] = []): boolean {
+  if (hostIsLoopback(host)) return true
+  if (host === undefined || host.trim() === '') return false
+  const name = hostnameOfHost(host)
+  return allowedHosts.some(entry => normalizeAllowedHost(entry) === name)
+}
+
+/**
+ * Origin is trusted when absent (non-browser), loopback, or an extra host the
+ * operator listed. A present Origin from an unlisted host is rejected.
+ */
+export function originIsTrusted(origin: string | undefined, allowedHosts: readonly string[] = []): boolean {
+  if (originIsLoopback(origin)) return true
+  try {
+    const { hostname } = new URL(origin ?? '')
+    const name = hostname === '::1' ? '[::1]' : hostname.toLowerCase()
+    return allowedHosts.some(entry => {
+      const allowed = normalizeAllowedHost(entry)
+      return allowed === name || allowed === hostname.toLowerCase()
+    })
+  } catch {
+    return false
+  }
+}
+
+/** Combined Host + Origin gate used by the card's status and control routes. */
+export function requestIsTrusted(
+  req: { headers: { host?: string; origin?: string } },
+  allowedHosts: readonly string[] = [],
+): boolean {
+  return hostIsTrusted(req.headers.host, allowedHosts) && originIsTrusted(req.headers.origin, allowedHosts)
 }

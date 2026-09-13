@@ -1037,6 +1037,12 @@ interface Config {
    * location. Only needed when the app keeps its state somewhere unusual.
    */
   productConfigFile?: string;
+  /**
+   * Extra Host/Origin authorities for the settings card when DSH Web is
+   * reached over LAN (e.g. `192.168.1.10`). Empty (the default) keeps the
+   * card on loopback only. Never put LAN names into the loopback set.
+   */
+  allowedHosts?: string[];
 }
 declare const Config: z<Config>;
 /**
